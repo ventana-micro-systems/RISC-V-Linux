@@ -553,4 +553,5 @@ source "kernel/power/Kconfig"
 
 endmenu
 
+source "arch/riscv/kvm/Kconfig"
 source "drivers/firmware/Kconfig"
