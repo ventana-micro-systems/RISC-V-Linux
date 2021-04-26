@@ -457,6 +457,7 @@ static int __init imsic_ipi_set_virq(struct imsic_priv *priv)
 	return 0;
 }
 
+<<<<<<< HEAD
 static int __init imsic_ipi_domain_init(struct imsic_priv *priv)
 {
 	int rc;
