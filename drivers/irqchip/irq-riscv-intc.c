@@ -39,6 +39,14 @@ static asmlinkage void riscv_intc_aia_irq(struct pt_regs *regs)
 					  topi >> TOPI_IID_SHIFT);
 }
 
+static asmlinkage void riscv_intc_aia_irq(struct pt_regs *regs)
+{
+	unsigned long topi;
+
+	while ((topi = csr_read(CSR_TOPI)))
+		handle_domain_irq(intc_domain, topi >> TOPI_IID_SHIFT, regs);
+}
+
 /*
  * On RISC-V systems local interrupts are masked or unmasked by writing
  * the SIE (Supervisor Interrupt Enable) CSR.  As CSRs can only be written
