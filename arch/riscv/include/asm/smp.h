@@ -121,6 +121,11 @@ static inline bool riscv_use_ipi_for_rfence(void)
 	return false;
 }
 
+static inline bool riscv_use_ipi_for_rfence(void)
+{
+	return false;
+}
+
 #endif /* CONFIG_SMP */
 
 #if defined(CONFIG_HOTPLUG_CPU) && (CONFIG_SMP)
