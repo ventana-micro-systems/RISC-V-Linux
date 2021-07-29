@@ -148,7 +148,7 @@ static int __init sbi_ipi_set_virq(void)
 		return -ENOMEM;
 	}
 
-	riscv_ipi_set_virq_range(virq, BITS_PER_LONG);
+	riscv_ipi_set_virq_range(virq, BITS_PER_LONG, false);
 
 	return 0;
 }
