@@ -84,7 +84,7 @@ static int stage2_level_to_page_size(u32 level, unsigned long *out_pgsize)
 }
 
 static int stage2_cache_topup(struct kvm_mmu_page_cache *pcache,
-			      int min, int max)
+			      int min, int max, bool in_atomic)
 {
 	void *page;
 
@@ -92,7 +92,10 @@ static int stage2_cache_topup(struct kvm_mmu_page_cache *pcache,
 	if (pcache->nobjs >= min)
 		return 0;
 	while (pcache->nobjs < max) {
-		page = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+		if (in_atomic)
+			page = (void *)__get_free_page(GFP_ATOMIC | __GFP_ZERO);
+		else
+			page = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
 		if (!page)
 			return -ENOMEM;
 		pcache->objects[pcache->nobjs++] = page;
@@ -377,8 +380,9 @@ static void stage2_wp_memory_region(struct kvm *kvm, int slot)
 	kvm_flush_remote_tlbs(kvm);
 }
 
-static int stage2_ioremap(struct kvm *kvm, gpa_t gpa, phys_addr_t hpa,
-			  unsigned long size, bool writable)
+int kvm_riscv_stage2_ioremap(struct kvm *kvm, gpa_t gpa,
+			     phys_addr_t hpa, unsigned long size,
+			     bool writable, bool in_atomic)
 {
 	pte_t pte;
 	int ret = 0;
@@ -397,7 +401,8 @@ static int stage2_ioremap(struct kvm *kvm, gpa_t gpa, phys_addr_t hpa,
 
 		ret = stage2_cache_topup(&pcache,
 					 stage2_pgd_levels,
-					 KVM_MMU_PAGE_CACHE_NR_OBJS);
+					 KVM_MMU_PAGE_CACHE_NR_OBJS,
+					 in_atomic);
 		if (ret)
 			goto out;
 
@@ -413,6 +418,13 @@ static int stage2_ioremap(struct kvm *kvm, gpa_t gpa, phys_addr_t hpa,
 out:
 	stage2_cache_flush(&pcache);
 	return ret;
+}
+
+void kvm_riscv_stage2_iounmap(struct kvm *kvm, gpa_t gpa, unsigned long size)
+{
+	spin_lock(&kvm->mmu_lock);
+	stage2_unmap_range(kvm, gpa, size, false);
+	spin_unlock(&kvm->mmu_lock);
 }
 
 void kvm_arch_mmu_enable_log_dirty_pt_masked(struct kvm *kvm,
@@ -540,8 +552,9 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 				goto out;
 			}
 
-			ret = stage2_ioremap(kvm, gpa, pa,
-					     vm_end - vm_start, writable);
+			ret = kvm_riscv_stage2_ioremap(kvm, gpa, pa,
+						       vm_end - vm_start,
+						       writable, false);
 			if (ret)
 				break;
 		}
@@ -676,7 +689,7 @@ int kvm_riscv_stage2_map(struct kvm_vcpu *vcpu,
 
 	/* We need minimum second+third level pages */
 	ret = stage2_cache_topup(pcache, stage2_pgd_levels,
-				 KVM_MMU_PAGE_CACHE_NR_OBJS);
+				 KVM_MMU_PAGE_CACHE_NR_OBJS, false);
 	if (ret) {
 		kvm_err("Failed to topup stage2 cache\n");
 		return ret;
