@@ -14,6 +14,7 @@
 #include <asm/switch_to.h>
 
 unsigned long elf_hwcap __read_mostly;
+bool riscv_aia_available __read_mostly;
 
 /* Host ISA bitmap */
 static DECLARE_BITMAP(riscv_isa, RISCV_ISA_EXT_MAX) __read_mostly;
@@ -61,7 +62,7 @@ EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
 
 void __init riscv_fill_hwcap(void)
 {
-	struct device_node *node;
+	struct device_node *intc, *node;
 	const char *isa;
 	char print_str[BITS_PER_LONG + 1];
 	size_t i, j, isa_len;
@@ -75,12 +76,20 @@ void __init riscv_fill_hwcap(void)
 	isa2hwcap['c'] = isa2hwcap['C'] = COMPAT_HWCAP_ISA_C;
 
 	elf_hwcap = 0;
+	riscv_aia_available = true;
 
 	bitmap_zero(riscv_isa, RISCV_ISA_EXT_MAX);
 
 	for_each_of_cpu_node(node) {
 		unsigned long this_hwcap = 0;
 		unsigned long this_isa = 0;
+
+		intc = of_find_compatible_node(node, NULL,
+						"riscv,cpu-intc-aia");
+		if (!intc)
+			riscv_aia_available = false;
+		else
+			of_node_put(intc);
 
 		if (riscv_of_processor_hartid(node) < 0)
 			continue;
