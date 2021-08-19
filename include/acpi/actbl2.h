@@ -573,7 +573,7 @@ enum acpi_madt_type {
 	ACPI_MADT_TYPE_MULTIPROC_WAKEUP = 16,
 	ACPI_MADT_TYPE_APLIC = 17,
 	ACPI_MADT_TYPE_IMSIC = 18,
-	ACPI_MADT_TYPE_RVCI = 19,
+	ACPI_MADT_TYPE_RINTC = 19,
 	ACPI_MADT_TYPE_RESERVED = 20	/* 20 and greater are reserved */
 };
 
@@ -804,6 +804,12 @@ struct acpi_madt_multiproc_wakeup_mailbox {
 
 #define ACPI_MP_WAKE_COMMAND_WAKEUP    1
 
+// RISC-V
+struct acpi_128 {
+    u64 lo;
+    u64 hi;
+};
+
 struct acpi_imsic_socket {
     u64 imsic_addr;
     u32 imsic_size;
@@ -815,17 +821,16 @@ struct acpi_imsic_socket {
 
 struct acpi_madt_imsic {
 	struct acpi_subtable_header header;
-    u8  reserved1[2];
     u8  id;
     u8  version;
     u8  mode;
     u8  num_sockets;
     u16 total_num_harts;
     u16 num_interrupt_id;
-    u16 hart_index;
     u16 ext_irq_num;
     u16 ipi_base;
     u16 ipi_count;
+    u32 hart_index;
     u32 reserved2;
     struct acpi_imsic_socket socket_imsic[1];
 };
@@ -848,9 +853,15 @@ struct acpi_aplic_imsic_info {
 
 struct acpi_madt_aplic {
 	struct acpi_subtable_header header;
-    u16 version;
-    u16 hartId;
-    u16 reserved;
+    u16  global_irq_base;
+    u16  mode;
+    u16  id;
+    u16  num_interrupts;
+    u16  target_imsic;
+    u16  reserved;
+    u16  aplic_size;
+    u64  aplic_addr;
+    struct acpi_aplic_imsic_info imsic_info;
 };
 
 /*

@@ -87,7 +87,7 @@ static int __init
 acpi_parse_rintc(union acpi_subtable_headers *header,
 			     const unsigned long end)
 {
-	int hart;
+	unsigned long hart;
 	bool found_boot_cpu = false;
 
 	struct acpi_madt_rintc *processor;

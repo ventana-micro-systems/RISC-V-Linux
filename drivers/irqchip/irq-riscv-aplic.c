@@ -19,6 +19,7 @@
 #include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/smp.h>
+#include <linux/irqchip/riscv-imsic.h>
 
 #define APLIC_DEFAULT_PRIORITY	0
 #define APLIC_DISABLE_IDELIVERY	0
@@ -781,3 +782,304 @@ static int __init aplic_init(void)
 	return platform_driver_register(&aplic_driver);
 }
 core_initcall(aplic_init);
+
+#ifdef CONFIG_ACPI
+
+union AcpiAplicImsicHartIndex {
+    struct {
+        uint32_t lhxw : 4;
+        uint32_t hhxw : 3;
+        uint32_t lhxs : 3;
+        uint32_t hhxs : 5;
+        uint32_t reserved : 17;
+    };
+    uint32_t hart_index;
+};
+
+struct imsic_info 
+{
+   int guest_index_bits;
+   int hart_index_bits;
+   int group_index_bits;
+   int group_index_shift;
+   int imsic_size;
+   int  num_harts;
+   unsigned long *hartId;
+   uint64_t imsic_addr;
+};
+
+static struct
+{
+	int mode;
+    int total_num_harts;
+    int ext_irq_num;
+    int num_interrupts;;
+    struct imsic_info imsic_info;
+} aplic_acpi_data __initdata;
+
+static int aplic_acpi_setup_lmask_msis(struct aplic_priv *priv)
+{
+	struct aplic_msi *msi;
+	struct msi_desc *desc;
+	struct device_node *imsic_node;
+	struct device *dev = priv->dev;
+	int i, rc, cpu, hartid, nr_parent_irqs;
+	struct aplic_msicfg *mc = &priv->msicfg;
+
+	/*
+	 * The APLIC outgoing MSI config registers assume target MSI
+	 * controller to be RISC-V AIA IMSIC controller. Due to this,
+	 * we need to extract target MSI base address required by APLIC
+	 * outgoing MSI config registers from the DT node pointed by
+	 * "msi-parent".
+	 */
+
+
+	/* Find number of IMSIC parent interrupts */
+	nr_parent_irqs = aplic_acpi_data.imsic_info.num_harts;
+	if (!nr_parent_irqs) {
+		dev_err(dev, "no parent irqs available\n");
+		return -ENODEV;
+	}
+
+	/* Find number of guest index bits (LHXS) */
+
+	mc->lhxs = aplic_acpi_data.imsic_info.guest_index_bits;
+	if (APLIC_xMSICFGADDRH_LHXS_MASK < mc->lhxs) {
+		of_node_put(imsic_node);
+		dev_err(dev, "IMSIC guest index bits big for APLIC LHXS\n");
+		return -EINVAL;
+	}
+
+	/* Find number of HART index bits (LHXW) */
+	mc->lhxw = aplic_acpi_data.imsic_info.hart_index_bits;
+	if (APLIC_xMSICFGADDRH_LHXW_MASK < mc->lhxw) {
+		dev_err(dev, "IMSIC hart index bits big for APLIC LHXW\n");
+		return -EINVAL;
+	}
+
+	/* Find number of group index bits (HHXW) */
+	mc->hhxw = aplic_acpi_data.imsic_info.group_index_bits;
+	if (APLIC_xMSICFGADDRH_HHXW_MASK < mc->hhxw) {
+		dev_err(dev, "IMSIC group index bits big for APLIC HHXW\n");
+		return -EINVAL;
+	}
+
+	/* Find first bit position of group index (HHXS) */
+	mc->hhxs = aplic_acpi_data.imsic_info.group_index_shift;
+	if (!mc->hhxs) {
+		/* Assume default value */
+		mc->hhxs = APLIC_xMSICFGADDR_PPN_SHIFT + mc->lhxs + mc->lhxw;
+		if (mc->hhxs < (2 * APLIC_xMSICFGADDR_PPN_SHIFT))
+			mc->hhxs = (2 * APLIC_xMSICFGADDR_PPN_SHIFT);
+	}
+	if (mc->hhxs < (2 * APLIC_xMSICFGADDR_PPN_SHIFT)) {
+		dev_err(dev, "IMSIC group index shift should be >= %d\n",
+			(2 * APLIC_xMSICFGADDR_PPN_SHIFT));
+		return -EINVAL;
+	}
+	mc->hhxs -= (2 * APLIC_xMSICFGADDR_PPN_SHIFT);
+	if (APLIC_xMSICFGADDRH_HHXS_MASK < mc->hhxs) {
+		dev_err(dev, "IMSIC group index shift big for APLIC HHXS\n");
+		return -EINVAL;
+	}
+
+	/* Compute PPN base */
+	mc->base_ppn = aplic_acpi_data.imsic_info.imsic_addr >> APLIC_xMSICFGADDR_PPN_SHIFT;
+	mc->base_ppn &= ~APLIC_xMSICFGADDR_PPN_HART(mc->lhxs);
+	mc->base_ppn &= ~APLIC_xMSICFGADDR_PPN_LHX(mc->lhxw, mc->lhxs);
+	mc->base_ppn &= ~APLIC_xMSICFGADDR_PPN_HHX(mc->hhxw, mc->hhxs);
+
+	/* Setup target CPU mask */
+	for (i = 0; i < nr_parent_irqs; i++) {
+
+		hartid = aplic_acpi_data.imsic_info.hartId[i];
+		if (hartid < 0) {
+			dev_err(dev, "no hart ID for IMSIC parent irq%d\n",
+				i);
+			return -EIO;
+		}
+
+		cpu = riscv_hartid_to_cpuid(hartid);
+		if (cpu < 0) {
+			dev_err(dev, "invalid cpuid for IMSIC page%d\n", i);
+			return cpu;
+		}
+
+		cpumask_set_cpu(cpu, &priv->lmask);
+	}
+
+
+	/* Allocate one APLIC MSI for every IRQ line */
+	priv->msis = devm_kcalloc(dev, priv->nr_irqs + 1,
+				  sizeof(*msi), GFP_KERNEL);
+	if (!priv->msis)
+		return -ENOMEM;
+	for (i = 0; i <= priv->nr_irqs; i++) {
+		priv->msis[i].hw_irq = i;
+		priv->msis[i].priv = priv;
+	}
+
+	/* Allocate platform MSIs from parent */
+	rc = platform_msi_domain_alloc_irqs(dev, priv->nr_irqs,
+					    aplic_msi_write_msg);
+	if (rc) {
+		dev_err(dev, "failed to allocate MSIs\n");
+		return rc;
+	}
+
+	/* Register callback to free-up MSIs */
+	devm_add_action(dev, aplic_msi_free, dev);
+
+	/* Configure chained handler for each APLIC MSI */
+	for_each_msi_entry(desc, dev) {
+		msi = &priv->msis[desc->platform.msi_index + 1];
+		msi->parent_irq = desc->irq;
+
+		irq_set_chained_handler_and_data(msi->parent_irq,
+						 aplic_msi_handle_irq, msi);
+	}
+
+	return 0;
+}
+
+static int aplic_acpi_probe(struct platform_device *pdev)
+{
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+	struct device *dev = &pdev->dev;
+	struct acpi_device *acpi_device;
+	struct aplic_priv *priv;
+	struct acpi_madt_aplic *aplic;
+	union acpi_object *obj;
+	phys_addr_t pa;
+	int rc, i;
+    struct acpi_subtable_header *entry;
+    union AcpiAplicImsicHartIndex hart_index_bits;
+	struct fwnode_handle *fn;
+    struct irq_domain *msi_domain;
+
+	dev_info(dev, "probing via ACPI\n");
+	acpi_device = ACPI_COMPANION(dev);
+	if (!acpi_device) {
+		dev_err(dev, "ACPI companion is missing\n");
+		return -ENODEV;
+	}
+
+	if (ACPI_FAILURE(acpi_evaluate_object(acpi_device->handle, "_MAT", NULL, &buffer)))
+		return -ENODEV;
+	obj = buffer.pointer;
+	if (obj->type != ACPI_TYPE_BUFFER ||
+	    obj->buffer.length < sizeof(struct acpi_subtable_header)) {
+		dev_err(dev, "ACPI_TYPE_BUFFER\n");
+		return -ENODEV;
+	}
+
+	entry = (struct acpi_subtable_header *)obj->buffer.pointer;
+
+    aplic = container_of(entry, struct acpi_madt_aplic, header);
+
+    hart_index_bits.hart_index = aplic->imsic_info.hart_index;
+    aplic_acpi_data.num_interrupts = aplic->num_interrupts;
+    aplic_acpi_data.imsic_info.imsic_addr = aplic->imsic_info.imsic_addr;
+    aplic_acpi_data.imsic_info.imsic_size = aplic->imsic_info.imsic_size;
+    aplic_acpi_data.imsic_info.guest_index_bits =
+        hart_index_bits.lhxs;
+    aplic_acpi_data.imsic_info.hart_index_bits =
+        hart_index_bits.lhxw;
+    aplic_acpi_data.imsic_info.group_index_bits =
+        hart_index_bits.hhxw;
+    aplic_acpi_data.imsic_info.group_index_shift =
+        hart_index_bits.hhxs;
+    aplic_acpi_data.imsic_info.num_harts =
+                   aplic->imsic_info.num_harts;
+	aplic_acpi_data.imsic_info.hartId = devm_kzalloc(dev,
+            sizeof(unsigned long)*aplic->imsic_info.num_harts, GFP_KERNEL);
+    for(i = 0; i < aplic_acpi_data.imsic_info.num_harts; i++) {
+        aplic_acpi_data.imsic_info.hartId[i] =
+		cpuid_to_hartid_map(aplic->imsic_info.cpuId[i]);
+    }
+
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+	platform_set_drvdata(pdev, priv);
+	priv->dev = dev;
+
+	priv->regs = devm_ioremap(dev, aplic->aplic_addr, aplic->aplic_size);
+	if (WARN_ON(!priv->regs)) {
+		dev_err(dev, "failed ioremap registers\n");
+		return -EIO;
+	}
+
+    priv->nr_irqs = aplic_acpi_data.num_interrupts;
+
+	msi_domain = irq_find_matching_fwnode(imsic_domain_id, DOMAIN_BUS_PLATFORM_MSI);
+	if (msi_domain)
+		dev_set_msi_domain(dev, msi_domain);
+    else
+        pr_err("Could not find parent MSI domain!\n");
+
+	/* Setup initial state APLIC interrupts */
+	aplic_init_hw_irqs(priv);
+
+	/* Setup IDCs or MSIs based on parent interrupts in DT node */
+	rc = aplic_acpi_setup_lmask_msis(priv);
+	if (rc)
+		return rc;
+
+	/* Setup global config and interrupt delivery */
+	aplic_init_hw_global(priv);
+
+	/* Add irq domain instance for the APLIC */
+	fn = irq_domain_alloc_named_fwnode("APLIC");
+	/* Create Base IRQ domain */
+	priv->irqdomain = irq_domain_create_linear(fn, priv->nr_irqs + 1,
+						&aplic_irqdomain_ops, priv);
+	if (!priv->irqdomain) {
+		dev_err(dev, "failed to add irq domain\n");
+		return -ENOMEM;
+	}
+
+    acpi_set_irq_model(ACPI_IRQ_MODEL_RISCV_AIA, fn);
+
+	if (priv->nr_idcs) {
+		dev_info(dev, "%d interrupts directly connected to %d CPUs\n",
+			 priv->nr_irqs, priv->nr_idcs);
+	} else {
+		pa = priv->msicfg.base_ppn << APLIC_xMSICFGADDR_PPN_SHIFT;
+		dev_info(dev, "%d interrupts forwared to MSI base PPN %pa\n",
+			 priv->nr_irqs, &pa);
+		dev_dbg(dev, "MSI target: guest index bits  %d\n",
+			priv->msicfg.lhxs);
+		dev_dbg(dev, "MSI target: hart index bits   %d\n",
+			priv->msicfg.lhxw);
+		dev_dbg(dev, "MSI target: group index bits  %d\n",
+			priv->msicfg.hhxw);
+		dev_dbg(dev, "MSI target: group index shift %d\n",
+			priv->msicfg.hhxs +
+			(2 * APLIC_xMSICFGADDR_PPN_SHIFT));
+	}
+
+	return 0;
+}
+
+static const struct acpi_device_id aplic_acpi_match[] = {
+	{ "APLIC001", 0 },
+	{}
+};
+
+static struct platform_driver aplic_acpi_driver = {
+	.driver = {
+		.name		= "riscv-aplic-acpi",
+		.acpi_match_table = aplic_acpi_match,
+	},
+	.probe = aplic_acpi_probe,
+	.remove = aplic_remove,
+};
+
+static int __init aplic_acpi_init(void)
+{
+	return platform_driver_register(&aplic_acpi_driver);
+}
+core_initcall(aplic_acpi_init);
+#endif

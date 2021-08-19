@@ -4,6 +4,7 @@
  */
 
 #define pr_fmt(fmt) "riscv-imsic: " fmt
+#include <linux/acpi.h>
 #include <linux/bitmap.h>
 #include <linux/cpu.h>
 #include <linux/dma-iommu.h>
@@ -24,6 +25,9 @@
 #include <linux/spinlock.h>
 #include <linux/smp.h>
 #include <asm/hwcap.h>
+#include <linux/irqchip/riscv-intc.h>
+#include <clocksource/timer-riscv.h>
+#include <linux/delay.h>
 
 #define IMSIC_DISABLE_EIDELIVERY	0
 #define IMSIC_ENABLE_EIDELIVERY	1
@@ -105,6 +109,7 @@ struct imsic_handler {
 };
 
 static bool imsic_init_done;
+struct fwnode_handle *imsic_domain_id;
 
 static int imsic_parent_irq;
 static DEFINE_PER_CPU(struct imsic_handler, imsic_handlers);
@@ -1128,3 +1133,452 @@ out_free_priv:
 }
 
 IRQCHIP_DECLARE(riscv_imsic, "riscv,imsics", imsic_init);
+
+#ifdef CONFIG_ACPI
+union AcpiImsicHartIndex {
+    struct {
+        uint32_t lhxw : 4;
+        uint32_t hhxw : 3;
+        uint32_t lhxs : 3;
+        uint32_t hhxs : 5;
+        uint32_t reserved : 17;
+    };
+    uint32_t hart_index;
+};
+
+struct socket_imsic 
+{
+   uint64_t  imsic_addr;
+   uint32_t  imsic_size;
+   uint8_t   num_harts;
+   unsigned long *hartId;
+};
+
+static struct
+{
+	int mode;
+	int num_parent_irqs;
+    int guest_index_bits;
+    int hart_index_bits;
+    int group_index_bits;
+    int group_index_shift;
+    int num_interrupt_id;
+    int total_num_harts;
+    int num_sockets;
+    int ext_irq_num;
+    int ipi_base;
+    int ipi_count;
+    struct socket_imsic *socket;
+} acpi_data __initdata;
+
+static bool __init acpi_validate_imsic_table(struct acpi_subtable_header *header,
+                                          struct acpi_probe_entry *ape)
+{
+	struct acpi_madt_imsic *imsic;
+    int size, i, j;
+    union AcpiImsicHartIndex hart_index;
+
+
+	imsic = (struct acpi_madt_imsic *)header;
+
+    // skip M-mode data
+    if(imsic->mode != 1) {
+        pr_warn("imsic_acpi_parse_madt: Skipping M-mode table\n");
+        return false;
+    }
+
+    size = sizeof(*acpi_data.socket) * imsic->num_sockets;
+    acpi_data.socket = kzalloc(size, GFP_KERNEL);
+    //TBD : ERROR check
+    hart_index.hart_index = imsic->hart_index;
+	acpi_data.mode = imsic->mode;
+	acpi_data.num_parent_irqs = imsic->total_num_harts;
+	acpi_data.total_num_harts = imsic->total_num_harts;
+	acpi_data.guest_index_bits = hart_index.lhxs;
+	acpi_data.hart_index_bits = hart_index.lhxw;
+	acpi_data.group_index_bits = hart_index.hhxw;
+	acpi_data.group_index_shift = hart_index.hhxs;
+	acpi_data.num_interrupt_id = imsic->num_interrupt_id;
+	acpi_data.ipi_base = imsic->ipi_base;
+	acpi_data.ipi_count = imsic->ipi_count;
+	acpi_data.num_sockets = imsic->num_sockets;
+    for(i = 0; i < acpi_data.num_sockets; i++) {
+        acpi_data.socket[i].imsic_addr = imsic->socket_imsic[i].imsic_addr;
+        acpi_data.socket[i].imsic_size = imsic->socket_imsic[i].imsic_size;
+        acpi_data.socket[i].num_harts = imsic->socket_imsic[i].num_harts;
+        size = sizeof(unsigned long) * acpi_data.socket[i].num_harts;
+        acpi_data.socket[i].hartId = kzalloc(size, GFP_KERNEL);
+
+        if(!acpi_data.socket[i].hartId)
+            panic("Can not allocate memory!");
+
+        for (j = 0; j < imsic->socket_imsic[i].num_harts; j++) {
+            acpi_data.socket[i].hartId[j] =
+	    		cpuid_to_hartid_map(imsic->socket_imsic[i].cpuId[j]);
+            pr_debug("acpi_validate_imsic_table: HART ID = %lu\n",
+                     acpi_data.socket[i].hartId[j]);
+
+            // REVISIT
+            // Without a delay memory hartId is not getting updated.
+            // Why??
+            udelay(1);
+        }
+    }
+
+	acpi_data.ext_irq_num = imsic->ext_irq_num;
+	return true;
+}
+
+static struct fwnode_handle *imsic_get_fwnode(struct device *dev)
+{
+    return imsic_domain_id;
+}
+
+static int __init imsic_acpi_irq_domains_init(struct imsic_priv *priv)
+{
+	struct fwnode_handle *fn;
+
+	fn = irq_domain_alloc_named_fwnode("IMSIC-Base");
+    imsic_domain_id = fn;
+	/* Create Base IRQ domain */
+	priv->base_domain = irq_domain_create_tree(fn,
+						&imsic_base_domain_ops, priv);
+	if (!priv->base_domain) {
+		pr_err("Failed to create IMSIC base domain\n");
+		return -ENOMEM;
+	}
+	irq_domain_update_bus_token(priv->base_domain, DOMAIN_BUS_NEXUS);
+
+#ifdef CONFIG_RISCV_IMSIC_PCI
+	/* Create PCI MSI domain */
+	priv->pci_domain = pci_msi_create_irq_domain(fn,
+						&imsic_pci_domain_info,
+						priv->base_domain);
+	if (!priv->pci_domain) {
+		pr_err("Failed to create IMSIC PCI domain\n");
+		irq_domain_remove(priv->base_domain);
+		return -ENOMEM;
+	}
+#endif
+
+	/* Create Platform MSI domain */
+	priv->plat_domain = platform_msi_create_irq_domain(fn,
+						&imsic_plat_domain_info,
+						priv->base_domain);
+	if (!priv->plat_domain) {
+		pr_err("Failed to create IMSIC platform domain\n");
+		if (priv->pci_domain)
+			irq_domain_remove(priv->pci_domain);
+		irq_domain_remove(priv->base_domain);
+		return -ENOMEM;
+	}
+
+	pci_msi_register_fwnode_provider(&imsic_get_fwnode);
+	return 0;
+}
+
+static int __init imsic_acpi_ipi_domain_init(struct imsic_priv *priv)
+{
+	int rc;
+	u32 base, nr;
+	struct fwnode_handle *fn;
+
+	fn = irq_domain_alloc_named_fwnode("IMSIC-IPI");
+
+	/* Find IPI base */
+	base = acpi_data.ipi_base;
+
+	/* Find IPI count */
+	nr = acpi_data.ipi_count;
+
+	/* Sanity check on IPI range */
+	if (!base || priv->nr_ids < base)
+		return -EINVAL;
+	if (!nr || priv->nr_ids < (base + nr - 1))
+		return -EINVAL;
+	priv->base_ipi = base;
+	priv->nr_ipis = nr;
+
+    /* Reserve IDs for IPI */
+    bitmap_set(priv->ids_used_bimap, priv->base_ipi, priv->nr_ipis);
+
+	/* Create IMSIC IPI domain using boot CPU node */
+    priv->ipi_domain = irq_domain_create_linear(fn, priv->nr_ipis,
+					   &imsic_ipi_domain_ops, priv);
+
+	if (!priv->ipi_domain) {
+		pr_err("imsic_acpi_ipi_domain_init: irq_domain_create_linear failed\n");
+		imsic_ids_free(priv, priv->base_ipi, priv->nr_ipis);
+		return -ENOMEM;
+	}
+
+	/* Set arch virq range */
+	rc = imsic_ipi_set_virq(priv);
+	if (rc) {
+		pr_err("imsic_acpi_ipi_domain_init: imsic_ipi_set_virq failed\n");
+		irq_domain_remove(priv->ipi_domain);
+		imsic_ids_free(priv, priv->base_ipi, priv->nr_ipis);
+		return rc;
+	}
+
+	return 0;
+}
+
+static int __init imsic_acpi_init(union acpi_subtable_headers *header,
+				   const unsigned long end)
+{
+	phys_addr_t base_addr;
+	int rc, nr_parent_irqs;
+	struct imsic_mmio *mmio;
+	struct imsic_priv *priv;
+	struct imsic_handler *handler;
+	u32 i, j, tmp, nr_handlers = 0;
+
+    if(acpi_data.mode != 1) {
+        pr_warn("imsic_acpi_init: M-mode information useful only for No_MMU platforms\n");
+		return -ENODEV;
+    }
+
+    if(!intc_domain) {
+        return -EPROBE_DEFER;
+    }
+
+	if (imsic_init_done) {
+        pr_warn("imsic_acpi_init: Already initialized!\n");
+		return -ENODEV;
+    }
+
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	/* Find number of parent interrupts */
+	nr_parent_irqs = acpi_data.total_num_harts;
+	if (!nr_parent_irqs) {
+		pr_err("imsic_acpi_init: no parent irqs available\n");
+		return -EINVAL;
+	}
+
+	/* Find number of guest index bits in MSI address */
+	priv->guest_index_bits = acpi_data.guest_index_bits;
+	tmp = BITS_PER_LONG - IMSIC_MMIO_PAGE_SHIFT;
+	if (tmp < priv->guest_index_bits) {
+		pr_err("imsic_acpi_init: guest index bits too big\n");
+		return -EINVAL;
+	}
+
+	/* Find number of HART index bits */
+    priv->hart_index_bits = acpi_data.hart_index_bits;
+	tmp = BITS_PER_LONG - IMSIC_MMIO_PAGE_SHIFT -
+	      priv->guest_index_bits;
+	if (tmp < priv->hart_index_bits) {
+		pr_err("imsic_acpi_init: HART index bits too big\n");
+		return -EINVAL;
+	}
+
+	/* Find number of group index bits */
+	priv->group_index_bits = acpi_data.group_index_bits;
+	tmp = BITS_PER_LONG - IMSIC_MMIO_PAGE_SHIFT -
+	      priv->guest_index_bits - priv->hart_index_bits;
+	if (tmp < priv->group_index_bits) {
+		pr_err("imsic_acpi_init: group index bits too big\n");
+		return -EINVAL;
+	}
+
+	/* Find first bit position of group index */
+	tmp = IMSIC_MMIO_PAGE_SHIFT + priv->guest_index_bits +
+	      priv->hart_index_bits;
+    priv->group_index_shift = acpi_data.group_index_shift;
+	if (priv->group_index_shift < tmp) {
+		pr_err("imsic_acpi_init: group index shift too small - %d\n",
+                priv->group_index_shift);
+		return -EINVAL;
+	}
+	tmp = priv->group_index_bits + priv->group_index_shift - 1;
+	if (tmp >= BITS_PER_LONG) {
+		pr_err("imsic_acpi_init: group index shift too big\n");
+		return -EINVAL;
+	}
+
+	/* Find number of interrupt identities */
+    priv->nr_ids = acpi_data.num_interrupt_id;
+	if ((priv->nr_ids < IMSIC_MIN_ID) ||
+	    (priv->nr_ids >= IMSIC_MAX_ID) ||
+	    ((priv->nr_ids & IMSIC_MIN_ID) != IMSIC_MIN_ID)) {
+		pr_err(": invalid number of interrupt identities\n");
+		return -EINVAL;
+	}
+
+	/* Compute base address */
+	priv->base_addr = acpi_data.socket[0].imsic_addr;
+	priv->base_addr &= ~(BIT(priv->guest_index_bits +
+				 priv->hart_index_bits +
+				 IMSIC_MMIO_PAGE_SHIFT) - 1);
+	priv->base_addr &= ~((BIT(priv->group_index_bits) - 1) <<
+			     priv->group_index_shift);
+
+    priv->num_mmios = acpi_data.num_sockets;
+	/* Allocate MMIO register sets */
+	priv->mmios = kcalloc(priv->num_mmios, sizeof(*mmio), GFP_KERNEL);
+	if (!priv->mmios) {
+		rc = -ENOMEM;
+		goto out_free_priv;
+	}
+
+	/* Parse and map MMIO register sets */
+	for (i = 0; i < priv->num_mmios; i++) {
+		mmio = &priv->mmios[i];
+		mmio->pa = acpi_data.socket[i].imsic_addr;
+		mmio->size = acpi_data.socket[i].imsic_size;
+
+		base_addr = mmio->pa;
+		base_addr &= ~(BIT(priv->guest_index_bits +
+				   priv->hart_index_bits +
+				   IMSIC_MMIO_PAGE_SHIFT) - 1);
+		base_addr &= ~((BIT(priv->group_index_bits) - 1) <<
+				priv->group_index_shift);
+		if (base_addr != priv->base_addr) {
+			rc = -EINVAL;
+			pr_err("imsic_acpi_init: address mismatch for regset %d\n", i);
+			goto out_iounmap;
+		}
+
+		tmp = BIT(priv->guest_index_bits) - 1;
+		if ((mmio->size / IMSIC_MMIO_PAGE_SZ) & tmp) {
+			rc = -EINVAL;
+			pr_err("imsic_acpi_init: size mismatch for regset %d\n",i);
+			goto out_iounmap;
+		}
+
+		mmio->va = ioremap(mmio->pa, mmio->size);
+		if (!mmio->va) {
+			rc = -EIO;
+			pr_err("imsic_acpi_init: unable to map MMIO regset %d\n", i);
+			goto out_iounmap;
+		}
+	}
+
+	/* Initialize interrupt management */
+	rc = imsic_ids_init(priv);
+	if (rc) {
+		pr_err("imsic_acpi_init: failed to initialize interrupt management\n");
+		goto out_iounmap;
+	}
+
+	/* Configure handlers for target CPUs */
+	for (i = 0; i < acpi_data.num_sockets; i++) {
+        for (j = 0; j < acpi_data.socket[i].num_harts; j++) {
+            unsigned long reloff;
+            int k, cpu, hartid;
+
+
+            hartid = acpi_data.socket[i].hartId[j];
+            if (hartid < 0) {
+                pr_warn("imsic_acpi_init: hart ID for parent irq%d not found\n", i);
+                continue;
+            }
+
+            cpu = riscv_hartid_to_cpuid(hartid);
+            if (cpu < 0) {
+                pr_warn("imsic_acpi_init: invalid cpuid for parent irq%d\n", i);
+                continue;
+            }
+
+
+            /* Find parent domain and register chained handler */
+            if (!imsic_parent_irq) {
+                imsic_parent_irq = irq_create_mapping(intc_domain, RV_IRQ_EXT);
+                if (!rc)
+                    irq_set_chained_handler(imsic_parent_irq,
+                                imsic_handle_irq);
+            }
+
+            /* Find MMIO location of MSI page */
+            mmio = NULL;
+            reloff = nr_handlers * BIT(priv->guest_index_bits) *
+                  IMSIC_MMIO_PAGE_SZ;
+            for (k = 0; priv->num_mmios; k++) {
+                if (reloff < priv->mmios[k].size) {
+                    mmio = &priv->mmios[k];
+                    break;
+                }
+
+                reloff -= priv->mmios[k].size;
+            }
+            if (!mmio) {
+                pr_warn("imsic_acpi_init: MMIO not found for parent irq%d\n", i);
+                continue;
+            }
+
+            handler = per_cpu_ptr(&imsic_handlers, cpu);
+            if (handler->priv) {
+                pr_warn("imsic_acpi_init: CPU%d handler already configured.\n",
+                        cpu);
+                goto done;
+            }
+
+            cpumask_set_cpu(cpu, &priv->lmask);
+            handler->msi_pa = mmio->pa + reloff;
+            handler->msi_va = mmio->va + reloff;
+            handler->priv = priv;
+
+    done:
+            nr_handlers++;
+        }
+	}
+
+	/* Initialize IPI domain */
+    rc = imsic_acpi_ipi_domain_init(priv);
+	if (rc) {
+		pr_err("imsic_acpi_init: Failed to initialize IPI domain\n");
+		goto out_irqs_cleanup;
+	}
+
+	/* Initialize IRQ and MSI domains */
+	rc = imsic_acpi_irq_domains_init(priv);
+	if (rc) {
+		pr_err("imsic_acpi_init: Failed to initialize IRQ and MSI domains\n");
+		goto out_ipi_domain_cleanup;
+	}
+
+	/* Setup cpuhp state */
+	cpuhp_setup_state(CPUHP_AP_ONLINE_DYN,
+			  "irqchip/riscv/imsic:starting",
+			  imsic_starting_cpu, imsic_dying_cpu);
+
+    acpi_set_irq_model(ACPI_IRQ_MODEL_RISCV_AIA, imsic_domain_id);
+
+	/*
+	 * Only one IMSIC instance allowed in a platform for clean
+	 * implementation of SMP IRQ affinity and per-CPU IPIs.
+	 *
+	 * This means on a multi-socket (or multi-die) platform we
+	 * will have multiple MMIO regions for one IMSIC instance.
+	 */
+	imsic_init_done = true;
+
+	pr_info("imsic_acpi_init: mapped %d interrupts using %d handlers\n",
+		priv->nr_ids, nr_handlers);
+
+	return 0;
+
+out_ipi_domain_cleanup:
+	imsic_ipi_domain_cleanup(priv);
+out_irqs_cleanup:
+	imsic_ids_cleanup(priv);
+out_iounmap:
+	for (i = 0; i < priv->num_mmios; i++) {
+		if (priv->mmios[i].va)
+			iounmap(priv->mmios[i].va);
+	}
+	kfree(priv->mmios);
+out_free_priv:
+	kfree(priv);
+
+	return 0;
+}
+
+IRQCHIP_ACPI_DECLARE(riscv_imsic, ACPI_MADT_TYPE_IMSIC,
+		     acpi_validate_imsic_table, 1,
+		     imsic_acpi_init);
+#endif

@@ -53,6 +53,7 @@
 #define ACPI_SIG_MATR           "MATR"	/* Memory Address Translation Table */
 #define ACPI_SIG_MSDM           "MSDM"	/* Microsoft Data Management Table */
 
+#define ACPI_SIG_RTDT           "RTDT"	/* RISCV Timer Description Table */
 /*
  * These tables have been seen in the field, but no definition has been found
  */
@@ -1718,6 +1719,28 @@ struct acpi_ibft_target {
 	u16 reverse_chap_name_offset;
 	u16 reverse_chap_secret_length;
 	u16 reverse_chap_secret_offset;
+};
+
+/*******************************************************************************
+ *
+ * RTDT - RISC-V Timer Description Table
+ *
+ ******************************************************************************/
+struct acpi1_128 {
+    u64 lo;
+    u64 hi;
+};
+
+struct acpi_table_rtdt {
+	struct acpi_table_header header;	/* Common ACPI table header */
+    u16 reserved;
+    u16 num_mtimer;
+    u16 num_harts;
+    u32 reserved1;
+    u32 size;
+    u64 base_addr;
+    u64 time_base_freq;
+    struct acpi1_128 hartId[1];
 };
 
 /* Reset to default packing */
