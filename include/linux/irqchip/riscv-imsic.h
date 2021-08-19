@@ -45,6 +45,7 @@ extern int imsic_cpu_page_phys(unsigned int cpu, unsigned int guest_index,
 
 extern void *imsic_cpu_page_virt(unsigned int cpu, unsigned int guest_index);
 
+extern struct fwnode_handle *imsic_domain_id;
 #else
 
 static inline unsigned int imsic_num_ids(void)

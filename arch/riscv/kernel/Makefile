@@ -22,6 +22,7 @@ obj-y	+= cpu.o
 obj-y	+= cpufeature.o
 obj-y	+= entry.o
 obj-y	+= irq.o
+obj-y	+= io.o
 obj-y	+= process.o
 obj-y	+= ptrace.o
 obj-y	+= reset.o
