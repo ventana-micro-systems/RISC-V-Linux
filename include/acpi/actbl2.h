@@ -741,7 +741,10 @@ enum acpi_madt_type {
 	ACPI_MADT_TYPE_GENERIC_REDISTRIBUTOR = 14,
 	ACPI_MADT_TYPE_GENERIC_TRANSLATOR = 15,
 	ACPI_MADT_TYPE_MULTIPROC_WAKEUP = 16,
-	ACPI_MADT_TYPE_RESERVED = 17	/* 17 and greater are reserved */
+	ACPI_MADT_TYPE_APLIC = 17,
+	ACPI_MADT_TYPE_IMSIC = 18,
+	ACPI_MADT_TYPE_RVCI = 19,
+	ACPI_MADT_TYPE_RESERVED = 20	/* 20 and greater are reserved */
 };
 
 /*
@@ -970,6 +973,55 @@ struct acpi_madt_multiproc_wakeup_mailbox {
 };
 
 #define ACPI_MP_WAKE_COMMAND_WAKEUP    1
+
+struct acpi_imsic_socket {
+    u64 imsic_addr;
+    u32 imsic_size;
+    u32  num_harts;
+    u8  cpuId[1];
+};
+
+/* 18: IMSIC Group (ACPI 6.4+) */
+
+struct acpi_madt_imsic {
+	struct acpi_subtable_header header;
+    u8  reserved1[2];
+    u8  id;
+    u8  version;
+    u8  mode;
+    u8  num_sockets;
+    u16 total_num_harts;
+    u16 num_interrupt_id;
+    u16 hart_index;
+    u16 ext_irq_num;
+    u16 ipi_base;
+    u16 ipi_count;
+    u32 reserved2;
+    struct acpi_imsic_socket socket_imsic[1];
+};
+
+struct acpi_madt_rintc {
+	struct acpi_subtable_header header;
+    u8  version;
+    u8  aia_csr_enabled;
+    u32 uid;
+    struct acpi_128 hartId;
+};
+
+struct acpi_aplic_imsic_info {
+    u64 imsic_addr;
+    u32 hart_index;
+    u16 imsic_size;
+    u16 num_harts;
+    u8 cpuId[1];
+};
+
+struct acpi_madt_aplic {
+	struct acpi_subtable_header header;
+    u16 version;
+    u16 hartId;
+    u16 reserved;
+};
 
 /*
  * Common flags fields for MADT subtables
