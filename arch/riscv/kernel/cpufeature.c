@@ -12,6 +12,9 @@
 #include <asm/hwcap.h>
 #include <asm/smp.h>
 #include <asm/switch_to.h>
+#include <linux/dmi.h>
+#include <asm/dmi.h>
+#include <asm/unaligned.h>
 
 unsigned long elf_hwcap __read_mostly;
 bool riscv_aia_available __read_mostly;
@@ -59,6 +62,42 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit)
 	return test_bit(bit, bmap) ? true : false;
 }
 EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
+
+void riscv_acpi_fill_hwcap(void)
+{
+	char print_str[BITS_PER_LONG + 1];
+	size_t i, j;
+
+	elf_hwcap = 0;
+
+	bitmap_zero(riscv_isa, RISCV_ISA_EXT_MAX);
+
+    dmi_riscv_get_isa(&elf_hwcap, &riscv_isa[0]);
+
+	/* We don't support systems with F but without D, so mask those out
+	 * here. */
+	if ((elf_hwcap & COMPAT_HWCAP_ISA_F) && !(elf_hwcap & COMPAT_HWCAP_ISA_D)) {
+		pr_info("This kernel does not support systems with F but not D\n");
+		elf_hwcap &= ~COMPAT_HWCAP_ISA_F;
+	}
+
+	memset(print_str, 0, sizeof(print_str));
+	for (i = 0, j = 0; i < BITS_PER_LONG; i++)
+		if (riscv_isa[0] & BIT_MASK(i))
+			print_str[j++] = (char)('a' + i);
+	pr_info("riscv: ISA extensions %s\n", print_str);
+
+	memset(print_str, 0, sizeof(print_str));
+	for (i = 0, j = 0; i < BITS_PER_LONG; i++)
+		if (elf_hwcap & BIT_MASK(i))
+			print_str[j++] = (char)('a' + i);
+	pr_info("riscv: ELF capabilities %s\n", print_str);
+
+#ifdef CONFIG_FPU
+	if (elf_hwcap & (COMPAT_HWCAP_ISA_F | COMPAT_HWCAP_ISA_D))
+		static_branch_enable(&cpu_hwcap_fpu);
+#endif
+}
 
 void __init riscv_fill_hwcap(void)
 {
