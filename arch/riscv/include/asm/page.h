@@ -148,6 +148,7 @@ extern phys_addr_t __phys_addr_symbol(unsigned long x);
 #else
 #define __virt_to_phys(x)	__va_to_pa_nodebug(x)
 #define __phys_addr_symbol(x)	__va_to_pa_nodebug(x)
+#define __phys_to_virt(x)      __pa_to_va_nodebug(x)
 #endif /* CONFIG_DEBUG_VIRTUAL */
 
 #define __pa_symbol(x)	__phys_addr_symbol(RELOC_HIDE((unsigned long)(x), 0))

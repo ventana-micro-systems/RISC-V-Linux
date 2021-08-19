@@ -13,6 +13,8 @@ config 32BIT
 config RISCV
 	def_bool y
 	select ARCH_32BIT_OFF_T if !64BIT
+    select ACPI_GENERIC_GSI if ACPI
+	select ACPI_MCFG if (ACPI && PCI)
 	select ARCH_CLOCKSOURCE_INIT
 	select ARCH_SUPPORTS_ATOMIC_RMW
 	select ARCH_SUPPORTS_DEBUG_PAGEALLOC if MMU
@@ -473,6 +475,7 @@ config EFI_STUB
 config EFI
 	bool "UEFI runtime support"
 	depends on OF && !XIP_KERNEL
+	select ARCH_SUPPORTS_ACPI
 	select LIBFDT
 	select UCS2_STRING
 	select EFI_PARAMS_FROM_FDT
@@ -556,3 +559,4 @@ endmenu
 
 source "arch/riscv/kvm/Kconfig"
 source "drivers/firmware/Kconfig"
+source "drivers/acpi/Kconfig"
