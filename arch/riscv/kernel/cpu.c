@@ -3,6 +3,7 @@
  * Copyright (C) 2012 Regents of the University of California
  */
 
+#include <linux/acpi.h>
 #include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/of.h>
@@ -107,18 +108,42 @@ static int c_show(struct seq_file *m, void *v)
 	unsigned long cpu_id = (unsigned long)v - 1;
 	struct device_node *node = of_get_cpu_node(cpu_id, NULL);
 	const char *compat, *isa, *mmu;
+	int i, j, ret;
 
 	seq_printf(m, "processor\t: %lu\n", cpu_id);
 	seq_printf(m, "hart\t\t: %lu\n", cpuid_to_hartid_map(cpu_id));
-	if (!of_property_read_string(node, "riscv,isa", &isa))
-		print_isa(m, isa);
-	if (!of_property_read_string(node, "mmu-type", &mmu))
-		print_mmu(m, mmu);
-	if (!of_property_read_string(node, "compatible", &compat)
-	    && strcmp(compat, "riscv"))
-		seq_printf(m, "uarch\t\t: %s\n", compat);
-	seq_puts(m, "\n");
-	of_node_put(node);
+	if(acpi_disabled) {
+		if (!of_property_read_string(node, "riscv,isa", &isa))
+			print_isa(m, isa);
+		if (!of_property_read_string(node, "mmu-type", &mmu))
+			print_mmu(m, mmu);
+		if (!of_property_read_string(node, "compatible", &compat)
+		    && strcmp(compat, "riscv"))
+			seq_printf(m, "uarch\t\t: %s\n", compat);
+		seq_puts(m, "\n");
+		of_node_put(node);
+	}
+	else {
+		struct acpi_pptt_rv_hwcap cap;
+		char print_str[BITS_PER_LONG + 5];
+		ret = riscv_get_hw_capability(cpu_id, &cap);
+		if (ret >= 0) {
+			memset(print_str, 0, sizeof(print_str));
+			strcpy(print_str, "rv64");
+			for (i = 0, j = strlen(print_str); i < BITS_PER_LONG; i++)
+				if (cap.isa & BIT_MASK(i))
+					print_str[j++] = (char)('a' + i);
+			print_str[j] = '\0';
+			print_isa(m, print_str);
+			if(cap.cap.mmu_type == ACPI_PPTT_HART_CAP_MMU_TYPE_39) 
+				strcpy(print_str, "riscv,sv39");
+			else if(cap.cap.mmu_type == ACPI_PPTT_HART_CAP_MMU_TYPE_48) 
+				strcpy(print_str, "riscv,sv48");
+			print_mmu(m, print_str);
+			seq_puts(m, "\n");
+		}
+
+	}
 
 	return 0;
 }

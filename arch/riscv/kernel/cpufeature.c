@@ -6,6 +6,7 @@
  * Copyright (C) 2017 SiFive
  */
 
+#include <linux/acpi.h>
 #include <linux/bitmap.h>
 #include <linux/of.h>
 #include <asm/processor.h>
@@ -63,16 +64,53 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit)
 }
 EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
 
+static int get_hart_cap_from_smbios = 0;
+
 void riscv_acpi_fill_hwcap(void)
 {
 	char print_str[BITS_PER_LONG + 1];
-	size_t i, j;
+	size_t i, j, ret;
+	struct acpi_pptt_rv_hwcap cap;
+	unsigned int cpu;
+	unsigned long elf_isa_mask = 0x112D;
+	unsigned long this_hwcap = 0;
+	unsigned long this_isa = 0;
 
 	elf_hwcap = 0;
 
 	bitmap_zero(riscv_isa, RISCV_ISA_EXT_MAX);
 
-    dmi_riscv_get_isa(&elf_hwcap, &riscv_isa[0]);
+	if (get_hart_cap_from_smbios)
+		dmi_riscv_get_isa(&elf_hwcap, &riscv_isa[0]);
+	else {
+		memset(&cap, 0, sizeof(struct acpi_pptt_rv_hwcap));
+		for_each_possible_cpu(cpu) {
+			ret = riscv_get_hw_capability(cpu, &cap);
+			if(ret < 0) {
+				pr_warn("Unable to get HW capability for cpu - %d\n",
+						cpu);
+				continue;
+			}
+
+			this_isa = cap.isa;
+			this_hwcap |= (this_isa & elf_isa_mask);
+
+			/*
+			 * All "okay" hart should have same isa. Set HWCAP based on
+			 * common capabilities of every "okay" hart, in case they don't
+			 * have.
+			 */
+			if (elf_hwcap)
+				elf_hwcap &= this_hwcap;
+			else
+				elf_hwcap = this_hwcap;
+
+			if (riscv_isa[0])
+				riscv_isa[0] &= this_isa;
+			else
+				riscv_isa[0] = this_isa;
+		}
+	}
 
 	/* We don't support systems with F but without D, so mask those out
 	 * here. */

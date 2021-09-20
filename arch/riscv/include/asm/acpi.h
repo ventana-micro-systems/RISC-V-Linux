@@ -39,6 +39,11 @@ extern int acpi_disabled;
 extern int acpi_noirq;
 extern int acpi_pci_disabled;
 
+enum {
+	ACPI_PPTT_HART_CAP_MMU_TYPE_39,
+	ACPI_PPTT_HART_CAP_MMU_TYPE_48,
+};
+
 static inline void disable_acpi(void)
 {
 	acpi_disabled = 1;
@@ -112,4 +117,5 @@ static inline void acpi_map_cpus_to_nodes(void) { }
 #define ACPI_TABLE_FADT_MAJOR_REVISION 5
 #define ACPI_TABLE_FADT_MINOR_REVISION 1
 
+int riscv_get_hw_capability(unsigned int cpu, struct acpi_pptt_rv_hwcap *cap);
 #endif /*_ASM_ACPI_H*/

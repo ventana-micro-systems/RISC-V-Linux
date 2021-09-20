@@ -1687,8 +1687,9 @@ struct acpi_table_pptt {
 enum acpi_pptt_type {
 	ACPI_PPTT_TYPE_PROCESSOR = 0,
 	ACPI_PPTT_TYPE_CACHE = 1,
-	ACPI_PPTT_TYPE_ID = 2,
-	ACPI_PPTT_TYPE_RESERVED = 3
+	ACPI_PPTT_TYPE_RISCV_PROC_PROPERTY = 2,
+	ACPI_PPTT_TYPE_ID = 3,
+	ACPI_PPTT_TYPE_RESERVED = 4
 };
 
 /* 0: Processor Hierarchy Node Structure */
@@ -1761,8 +1762,25 @@ struct acpi_pptt_cache_v1 {
 #define ACPI_PPTT_CACHE_POLICY_WB           (0x0)	/* Cache is write back */
 #define ACPI_PPTT_CACHE_POLICY_WT           (1<<4)	/* Cache is write through */
 
-/* 2: ID Structure */
+/* 2: RISC-V Processor Capability Structure */
 
+union acpi_pptt_hart_caps {
+	struct {
+		u64 mmu_type : 4;
+		u64 aia_enabled : 1;
+		u64 reserved : 59;
+	};
+	u64 hart_cap;
+};
+
+struct acpi_pptt_rv_hwcap {
+	struct acpi_subtable_header header;
+	u16 version;
+	u32 isa;
+	union acpi_pptt_hart_caps cap;
+};
+
+/* 3: ID Structure */
 struct acpi_pptt_id {
 	struct acpi_subtable_header header;
 	u16 reserved;
