@@ -48,6 +48,30 @@ static u32 get_boot_hartid_from_fdt(void)
 
 efi_status_t check_platform_features(void)
 {
+	efi_guid_t boot_protocol_guid = EFI_RISCV_BOOT_PROTOCOL_GUID;
+	uint32_t version;
+	efi_status_t status;
+	efi_riscv_boot_protocol_t *boot_protocol;
+
+	status = efi_bs_call(locate_protocol, &boot_protocol_guid, NULL,
+			     (void **)&boot_protocol);
+	if (status == EFI_SUCCESS) {
+		efi_info("Firmware supports BOOT Protocol\n");
+		status = efi_call_proto(boot_protocol, get_protocol_version,
+				&version);
+		if (status == EFI_SUCCESS) {
+			efi_info("Protocol Version = 0x%x\n", version);
+			status = efi_call_proto(boot_protocol,
+						get_boot_hartid, &hartid);
+			if (status == EFI_SUCCESS) {
+				efi_info("UEFI Boot HartID = 0x%x\n", hartid);
+				return status;
+			}
+		}
+	}
+	efi_err("Unable to get boot hart ID using UEFI protocol\n");
+
+
 	hartid = get_boot_hartid_from_fdt();
 	if (hartid == U32_MAX) {
 		efi_err("/chosen/boot-hartid missing or invalid!\n");
