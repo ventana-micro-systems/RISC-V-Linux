@@ -167,7 +167,7 @@ void __init sbi_ipi_init(void)
 		goto fail_domain_remove;
 	}
 
-	riscv_ipi_set_virq_range(virq, BITS_PER_LONG);
+	riscv_ipi_set_virq_range(virq, BITS_PER_LONG, false);
 
 	cpuhp_setup_state(CPUHP_AP_ONLINE_DYN,
 			  "irqchip/riscv/sbi-ipi:starting",
