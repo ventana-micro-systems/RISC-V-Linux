@@ -99,7 +99,7 @@ static int __init acpi_fadt_sanity_check(void)
 	int ret = 0;
 
 	/*
-	 * FADT is required on arm64; retrieve it to check its presence
+	 * FADT is required on riscv; retrieve it to check its presence
 	 * and carry out revision and ACPI HW reduced compliancy tests
 	 */
 	status = acpi_get_table(ACPI_SIG_FADT, 0, &table);
@@ -118,16 +118,13 @@ static int __init acpi_fadt_sanity_check(void)
 	 * we only deal with ACPI 5.1 or newer revision to get GIC and SMP
 	 * boot protocol configuration data.
 	 */
-	if (table->revision < 5 ||
-	   (table->revision == 5 && fadt->minor_revision < 1)) {
+	if (table->revision < ACPI_TABLE_FADT_MAJOR_REVISION ||
+	   (table->revision == ACPI_TABLE_FADT_MAJOR_REVISION &&
+		fadt->minor_revision < ACPI_TABLE_FADT_MINOR_REVISION)) {
 		pr_err(FW_BUG "Unsupported FADT revision %d.%d, should be 5.1+\n",
 		       table->revision, fadt->minor_revision);
-
-		if (!fadt->arm_boot_flags) {
 			ret = -EINVAL;
 			goto out;
-		}
-		pr_err("FADT has ARM boot flags set, assuming 5.1\n");
 	}
 
 	if (!(fadt->flags & ACPI_FADT_HW_REDUCED)) {
@@ -212,17 +209,6 @@ done:
 
 pgprot_t __acpi_get_mem_attribute(phys_addr_t addr)
 {
-	/*
-	 * According to "Table 8 Map: EFI memory types to AArch64 memory
-	 * types" of UEFI 2.5 section 2.3.6.1, each EFI memory type is
-	 * mapped to a corresponding MAIR attribute encoding.
-	 * The EFI memory attribute advises all possible capabilities
-	 * of a memory region. We use the most efficient capability.
-	 */
-
-	u64 attr;
-
-	attr = efi_mem_attributes(addr);
     return PAGE_KERNEL;
 }
 
