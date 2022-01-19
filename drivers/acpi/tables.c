@@ -213,8 +213,8 @@ void acpi_table_print_madt_entry(struct acpi_subtable_header *header)
 		{
 			struct acpi_madt_imsic *p =
 				(struct acpi_madt_imsic *)header;
-			pr_debug("IMSIC (imsic_id[0x%04x] num_sockets[%x] total_num_harts[%d])\n",
-				 p->id, p->num_sockets,
+			pr_debug("IMSIC (num_sockets[%x] total_num_harts[%d])\n",
+				 p->num_sockets,
 				 p->total_num_harts);
 		}
 		break;

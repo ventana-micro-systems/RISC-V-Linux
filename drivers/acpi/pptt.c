@@ -265,7 +265,7 @@ static struct acpi_pptt_processor *acpi_find_processor_node(struct acpi_table_he
 		cpu_node = (struct acpi_pptt_processor *)entry;
 
 		if (entry->length == 0) {
-			pr_warn("Invalid zero length subtable\n");
+			pr_warn("acpi_find_processor_node: Invalid zero length subtable\n");
 			break;
 		}
 		if (entry->type == ACPI_PPTT_TYPE_PROCESSOR &&
@@ -620,6 +620,49 @@ int acpi_find_last_cache_level(unsigned int cpu)
 
 	return number_of_levels;
 }
+
+static int riscv_parse_pptt(struct acpi_table_header *table,
+				 unsigned int cpu,
+				 struct acpi_pptt_rv_hwcap *cap)
+{
+	u32 acpi_cpu_id = get_acpi_id_for_cpu(cpu);
+	int resource = 0;
+	struct acpi_pptt_processor *cpu_node = NULL;
+	struct acpi_subtable_header *res;
+	struct acpi_pptt_rv_hwcap *hwcap;
+
+	cpu_node = acpi_find_processor_node(table, acpi_cpu_id);
+	/* walk down from processor node */
+	while ((res = acpi_get_pptt_resource(table, cpu_node, resource))) {
+		resource++;
+		if (res->type == ACPI_PPTT_TYPE_RISCV_PROC_PROPERTY) {
+			hwcap = (struct acpi_pptt_rv_hwcap *) res;
+			cap->isa = hwcap->isa;
+			cap->cap.mmu_type = hwcap->cap.mmu_type;
+			cap->cap.aia_enabled = hwcap->cap.aia_enabled;
+			return 0;
+		}
+	}
+	return -ENOENT;
+}
+
+int riscv_get_hw_capability(unsigned int cpu, struct acpi_pptt_rv_hwcap *cap)
+{
+	struct acpi_table_header *table;
+	acpi_status status;
+
+	status = acpi_get_table(ACPI_SIG_PPTT, 0, &table);
+	if (ACPI_FAILURE(status)) {
+		acpi_pptt_warn_missing();
+		return -ENOENT;
+	}
+
+	status = riscv_parse_pptt(table, cpu, cap);
+	acpi_put_table(table);
+
+	return status;
+}
+
 
 /**
  * cache_setup_acpi() - Override CPU cache topology with data from the PPTT

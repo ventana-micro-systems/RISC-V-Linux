@@ -743,7 +743,7 @@ enum acpi_madt_type {
 	ACPI_MADT_TYPE_MULTIPROC_WAKEUP = 16,
 	ACPI_MADT_TYPE_APLIC = 17,
 	ACPI_MADT_TYPE_IMSIC = 18,
-	ACPI_MADT_TYPE_RVCI = 19,
+	ACPI_MADT_TYPE_RINTC = 19,
 	ACPI_MADT_TYPE_RESERVED = 20	/* 20 and greater are reserved */
 };
 
@@ -975,52 +975,47 @@ struct acpi_madt_multiproc_wakeup_mailbox {
 #define ACPI_MP_WAKE_COMMAND_WAKEUP    1
 
 struct acpi_imsic_socket {
-    u64 imsic_addr;
-    u32 imsic_size;
-    u32  num_harts;
-    u8  cpuId[1];
+	u32 imsic_addr_lo;
+	u32 imsic_addr_hi;
+	u32 imsic_size;
 };
 
 /* 18: IMSIC Group (ACPI 6.4+) */
 
 struct acpi_madt_imsic {
 	struct acpi_subtable_header header;
-    u8  reserved1[2];
-    u8  id;
-    u8  version;
-    u8  mode;
-    u8  num_sockets;
-    u16 total_num_harts;
-    u16 num_interrupt_id;
-    u16 hart_index;
-    u16 ext_irq_num;
-    u16 ipi_base;
-    u16 ipi_count;
-    u32 reserved2;
-    struct acpi_imsic_socket socket_imsic[1];
+	u8 version;
+	u8 mode;
+	u8 num_sockets;
+	u8 reserved1;
+	u16 num_interrupt_id;
+	u16 ipi_id;
+	u16 reserved;
+	u32 total_num_harts;
+	u32 hart_index;
+	struct acpi_imsic_socket socket_imsic[1];
 };
 
 struct acpi_madt_rintc {
 	struct acpi_subtable_header header;
-    u8  version;
-    u8  aia_csr_enabled;
-    u32 uid;
-    struct acpi_128 hartId;
-};
-
-struct acpi_aplic_imsic_info {
-    u64 imsic_addr;
-    u32 hart_index;
-    u16 imsic_size;
-    u16 num_harts;
-    u8 cpuId[1];
+	u8 version;
+	u8 reserved;
+	u32 uid;
+	u64 hartid;
+	u32 flags;
 };
 
 struct acpi_madt_aplic {
 	struct acpi_subtable_header header;
-    u16 version;
-    u16 hartId;
-    u16 reserved;
+	u8 id;
+	u8 version;
+	u8 mode;
+	u8 reserved1;
+	u16 global_irq_base;
+	u16 num_interrupts;
+	u16 reserved2;
+	u32 aplic_size;
+	u64 aplic_addr;
 };
 
 /*
@@ -2095,8 +2090,9 @@ struct acpi_table_pptt {
 enum acpi_pptt_type {
 	ACPI_PPTT_TYPE_PROCESSOR = 0,
 	ACPI_PPTT_TYPE_CACHE = 1,
-	ACPI_PPTT_TYPE_ID = 2,
-	ACPI_PPTT_TYPE_RESERVED = 3
+	ACPI_PPTT_TYPE_RISCV_PROC_PROPERTY = 2,
+	ACPI_PPTT_TYPE_ID = 3,
+	ACPI_PPTT_TYPE_RESERVED = 4
 };
 
 /* 0: Processor Hierarchy Node Structure */
@@ -2169,8 +2165,25 @@ struct acpi_pptt_cache_v1 {
 #define ACPI_PPTT_CACHE_POLICY_WB           (0x0)	/* Cache is write back */
 #define ACPI_PPTT_CACHE_POLICY_WT           (1<<4)	/* Cache is write through */
 
-/* 2: ID Structure */
+/* 2: RISC-V Processor Capability Structure */
 
+union acpi_pptt_hart_caps {
+	struct {
+		u64 mmu_type:4;
+		u64 aia_enabled:1;
+		u64 reserved:59;
+	};
+	u64 hart_cap;
+};
+
+struct acpi_pptt_rv_hwcap {
+	struct acpi_subtable_header header;
+	u16 version;
+	u32 isa;
+	union acpi_pptt_hart_caps cap;
+};
+
+/* 3: ID Structure */
 struct acpi_pptt_id {
 	struct acpi_subtable_header header;
 	u16 reserved;
@@ -2180,6 +2193,45 @@ struct acpi_pptt_id {
 	u16 major_rev;
 	u16 minor_rev;
 	u16 spin_rev;
+};
+
+/*******************************************************************************
+ *
+ * REDT - RISC-V Extension Description Table
+ *
+ ******************************************************************************/
+
+union acpi_rhct_hart_caps {
+	struct {
+		/* Revisit: Move mmu_type to extension list */
+		u32 mmu_type:4;
+		u32 reserved:28;
+	};
+	u32 hart_cap;
+};
+
+struct acpi_table_rhct {
+	struct acpi_table_header header;	/* Common ACPI table header */
+	u32 flags;
+};
+
+struct acpi_rhct_hart_info_cap {
+	u16 length;
+	u8 version;
+	u8 reserved;
+	u32 acpi_proc_id;
+	u32 isa;
+	u32 hart_hwcap;
+};
+
+struct acpi_rhct_hart_info_ext {
+	u16 ext;
+	u16 attr;
+};
+
+struct acpi_rhct_hart_info {
+	struct acpi_rhct_hart_info_cap cap;
+	//struct acpi_rhct_hart_info_ext ext[];
 };
 
 /*******************************************************************************

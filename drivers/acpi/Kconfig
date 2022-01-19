@@ -519,7 +519,9 @@ config ACPI_CONFIGFS
 
 if ARM64
 source "drivers/acpi/arm64/Kconfig"
+endif
 
+if ARM64 || RISCV
 config ACPI_PPTT
 	bool
 endif

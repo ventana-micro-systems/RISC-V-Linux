@@ -39,6 +39,11 @@ extern int acpi_disabled;
 extern int acpi_noirq;
 extern int acpi_pci_disabled;
 
+enum {
+	ACPI_RHCT_HART_CAP_MMU_TYPE_39,
+	ACPI_RHCT_HART_CAP_MMU_TYPE_48,
+};
+
 static inline void disable_acpi(void)
 {
 	acpi_disabled = 1;
@@ -111,5 +116,29 @@ static inline void acpi_map_cpus_to_nodes(void) { }
 
 #define ACPI_TABLE_FADT_MAJOR_REVISION 5
 #define ACPI_TABLE_FADT_MINOR_REVISION 1
+
+int riscv_get_hw_capability(unsigned int cpu, struct acpi_pptt_rv_hwcap *cap);
+
+#define RV(x) ((unsigned long)1 << (x - 'a'))
+
+enum riscv_extension_base {
+	ACPI_STD_EXT_I_BASE = 0x0000,
+	ACPI_STD_EXT_M_BASE = 0x0100,
+	ACPI_STD_EXT_A_BASE = 0x0200,
+	ACPI_STD_EXT_F_BASE = 0x0300,
+	ACPI_STD_EXT_D_BASE = 0x0400,
+	ACPI_STD_EXT_Q_BASE = 0x0500,
+	ACPI_STD_EXT_L_BASE = 0x0600,
+	ACPI_STD_EXT_C_BASE = 0x0700,
+	ACPI_STD_EXT_B_BASE = 0x0800,
+	ACPI_STD_EXT_K_BASE = 0x0900,
+	ACPI_STD_EXT_J_BASE = 0x0a00,
+	ACPI_STD_EXT_T_BASE = 0x0b00,
+	ACPI_STD_EXT_P_BASE = 0x0c00,
+	ACPI_STD_EXT_V_BASE = 0x0d00,
+	ACPI_SUPER_EXT_VM_BASE = 0x1000,
+	ACPI_SUPER_EXT_TIMER_BASE = 0x1100,
+	ACPI_SUPER_EXT_PMU_BASE = 0x1200
+};
 
 #endif /*_ASM_ACPI_H*/

@@ -37,6 +37,7 @@
 #include <asm/acpi.h>
 #include <asm/cpu.h>
 #include <asm/cputype.h>
+#include <linux/dmi.h>
 
 #include "head.h"
 
@@ -317,7 +318,15 @@ void __init setup_arch(char **cmdline_p)
 	setup_smp();
 #endif
 
-	riscv_fill_hwcap();
+    dmi_setup();
+
+    if(acpi_disabled) {
+        riscv_fill_hwcap();
+    }
+    else {
+        riscv_acpi_fill_hwcap();
+    }
+    early_ioremap_reset();
 }
 
 static int __init topology_init(void)

@@ -10,10 +10,15 @@
 #include <linux/random.h>
 #include <asm/dmi.h>
 #include <asm/unaligned.h>
+#include <asm/page.h>
 
 #ifndef SMBIOS_ENTRY_POINT_SCAN_START
 #define SMBIOS_ENTRY_POINT_SCAN_START 0xF0000
 #endif
+
+static unsigned long riscv_elf_hwcap __read_mostly;
+/* Host ISA bitmap */
+static unsigned long riscv_isa __read_mostly;
 
 struct kobject *dmi_kobj;
 EXPORT_SYMBOL_GPL(dmi_kobj);
@@ -461,6 +466,39 @@ static void __init dmi_memdev_walk(void)
 	}
 }
 
+int dmi_riscv_get_isa(unsigned long *elf_cap, unsigned long *isa)
+{
+    if((!elf_cap) || (!isa)) {
+        pr_err("Invalid arguments\n");
+        return -1;
+    }
+    *elf_cap = riscv_elf_hwcap;
+    *isa = riscv_isa;
+    return 0;
+}
+
+static void __init dmi_save_proc_property(const struct dmi_header *dm)
+{
+    unsigned long elf_isa_mask = 0x112D;
+    unsigned long this_hwcap = 0;
+    unsigned long this_isa = 0;
+	const u8 *dmi_data = (const u8 *)dm;
+
+    this_isa = (u32)get_unaligned((u32 *)&dmi_data[0x4C]);
+    pr_debug("0x%lx\n", this_isa);
+    this_hwcap |= (this_isa & elf_isa_mask);
+    if (riscv_elf_hwcap)
+        riscv_elf_hwcap &= this_hwcap;
+    else
+        riscv_elf_hwcap = this_hwcap;
+
+    if (riscv_isa)
+        riscv_isa &= this_isa;
+    else
+        riscv_isa = this_isa;
+
+}
+
 /*
  *	Process a DMI table entry. Right now all we care about are the BIOS
  *	and machine entries. For 2.5 we should pull the smbus controller info
@@ -513,6 +551,9 @@ static void __init dmi_decode(const struct dmi_header *dm, void *dummy)
 		break;
 	case 41:	/* Onboard Devices Extended Information */
 		dmi_save_extended_devices(dm);
+        break;
+    case 44:	/* Additional Processor Information */
+		dmi_save_proc_property(dm);
 	}
 }
 
