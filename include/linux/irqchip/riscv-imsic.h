@@ -71,6 +71,7 @@ extern const struct imsic_global_config *imsic_get_global_config(void);
 extern const struct imsic_local_config *imsic_get_local_config(
 							unsigned int cpu);
 
+extern struct fwnode_handle *imsic_domain_id;
 #else
 
 static inline const struct imsic_global_config *imsic_get_global_config(void)
