@@ -8,6 +8,7 @@
  *  Nick Kossifidis <mick@ics.forth.gr>
  */
 
+#include <linux/acpi.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/memblock.h>
@@ -32,6 +33,10 @@
 #include <asm/thread_info.h>
 #include <asm/kasan.h>
 #include <asm/efi.h>
+
+#include <asm/acpi.h>
+#include <asm/cpu.h>
+#include <asm/cputype.h>
 
 #include "head.h"
 
@@ -260,6 +265,13 @@ static void __init parse_dtb(void)
 #endif
 }
 
+u64 __cpu_logical_map[NR_CPUS] = { [0 ... NR_CPUS-1] = INVALID_HWID };
+
+u64 cpu_logical_map(unsigned int cpu)
+{
+	return __cpu_logical_map[cpu];
+}
+
 void __init setup_arch(char **cmdline_p)
 {
 	parse_dtb();
@@ -273,14 +285,25 @@ void __init setup_arch(char **cmdline_p)
 
 	efi_init();
 	paging_init();
+    //Support Later
+	//acpi_table_upgrade();
+
+	/* Parse the ACPI tables for possible boot-time configuration */
+	acpi_boot_table_init();
+	if (acpi_disabled) {
 #if IS_ENABLED(CONFIG_BUILTIN_DTB)
-	unflatten_and_copy_device_tree();
+        unflatten_and_copy_device_tree();
 #else
-	if (early_init_dt_verify(__va(XIP_FIXUP(dtb_early_pa))))
-		unflatten_device_tree();
-	else
-		pr_err("No DTB found in kernel mappings\n");
+        if (early_init_dt_verify(__va(XIP_FIXUP(dtb_early_pa))))
+            unflatten_device_tree();
+        else
+            pr_err("No DTB found in kernel mappings\n");
 #endif
+    }
+    else {
+        // REVISIT
+        early_init_dt_verify(__va(XIP_FIXUP(dtb_early_pa)));
+    }
 	misc_mem_init();
 
 	init_resources();
