@@ -92,6 +92,11 @@ static const struct irq_domain_ops riscv_intc_domain_ops = {
 	.xlate	= irq_domain_xlate_onecell,
 };
 
+static struct fwnode_handle *riscv_intc_hwnode(void)
+{
+	return (intc_domain) ? intc_domain->fwnode : NULL;
+}
+
 static int __init riscv_intc_init(struct device_node *node,
 				  struct device_node *parent)
 {
@@ -118,6 +123,8 @@ static int __init riscv_intc_init(struct device_node *node,
 		pr_err("unable to add IRQ domain\n");
 		return -ENXIO;
 	}
+
+	riscv_set_intc_hwnode_fn(riscv_intc_hwnode);
 
 	rc = set_handle_irq(&riscv_intc_irq);
 	if (rc) {
