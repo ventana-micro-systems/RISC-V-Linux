@@ -76,6 +76,7 @@ static inline bool acpi_has_cpu_in_madt(void)
 }
 
 struct acpi_madt_rintc *acpi_cpu_get_madt_rintc(int cpu);
+struct acpi_madt_rintc *acpi_hart_get_madt_rintc(int hart);
 static inline u32 get_acpi_id_for_cpu(unsigned int cpu)
 {
 	return	acpi_cpu_get_madt_rintc(cpu)->uid;

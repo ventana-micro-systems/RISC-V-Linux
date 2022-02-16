@@ -8,6 +8,7 @@
  * Copyright (C) 2017 SiFive
  */
 
+#include <linux/acpi.h>
 #include <linux/arch_topology.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -72,7 +73,90 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	}
 }
 
-void __init setup_smp(void)
+#ifdef CONFIG_ACPI
+static unsigned int cpu_count = 1;
+static unsigned int intc_count = 0;
+static struct acpi_madt_rintc cpu_madt_rintc[NR_CPUS];
+
+struct acpi_madt_rintc *acpi_hart_get_madt_rintc(int hart)
+{
+
+	return &cpu_madt_rintc[hart];
+}
+
+struct acpi_madt_rintc *acpi_cpu_get_madt_rintc(int cpu)
+{
+	int i;
+
+	for (i = 0; i < NR_CPUS; i++) {
+		if (riscv_hartid_to_cpuid(cpu_madt_rintc[i].hartid) == cpu)
+			return &cpu_madt_rintc[i];
+	}
+	return NULL;
+}
+
+static int __init
+acpi_parse_rintc(union acpi_subtable_headers *header,
+			     const unsigned long end)
+{
+	unsigned long hart;
+	bool found_boot_cpu = false;
+
+	struct acpi_madt_rintc *processor;
+
+	processor = (struct acpi_madt_rintc *)header;
+	cpu_madt_rintc[intc_count++] = *processor;
+	hart = processor->hartid;
+	if (hart < 0)
+		return 0;
+	if (hart == cpuid_to_hartid_map(0)) {
+		BUG_ON(found_boot_cpu);
+		found_boot_cpu = 1;
+		early_map_cpu_to_node(0, acpi_numa_get_nid(cpu_count));
+		return 0;
+	}
+	if (cpu_count >= NR_CPUS) {
+		pr_warn("Invalid cpuid [%d] for hartid [%lu]\n",
+			cpu_count, hart);
+		return 0;
+	}
+
+	cpuid_to_hartid_map(cpu_count) = hart;
+	early_map_cpu_to_node(cpu_count, acpi_numa_get_nid(cpu_count));
+	cpu_count++;
+	acpi_table_print_madt_entry(&header->common);
+	return 0;
+}
+
+static void __init acpi_parse_and_init_cpus(void)
+{
+	int cpuid;
+
+	cpu_set_ops(0);
+	/*
+	 * do a walk of MADT to determine how many CPUs
+	 * we have including disabled CPUs, and get information
+	 * we need for SMP init.
+	 */
+	acpi_table_parse_madt(ACPI_MADT_TYPE_RINTC,
+				      acpi_parse_rintc, 0);
+
+	/*
+     * NUMA - TBD
+	 */
+
+	for (cpuid = 1; cpuid < nr_cpu_ids; cpuid++) {
+		if (cpuid_to_hartid_map(cpuid) != INVALID_HARTID) {
+			cpu_set_ops(cpuid);
+			set_cpu_possible(cpuid, true);
+		}
+	}
+}
+#else
+#define acpi_parse_and_init_cpus(...)	do { } while (0)
+#endif
+
+static void __init of_parse_and_init_cpus(void)
 {
 	struct device_node *dn;
 	int hart;
@@ -115,6 +199,14 @@ void __init setup_smp(void)
 			set_cpu_possible(cpuid, true);
 		}
 	}
+}
+
+void __init setup_smp(void)
+{
+	if (acpi_disabled)
+		of_parse_and_init_cpus();
+	else
+		acpi_parse_and_init_cpus();
 }
 
 static int start_secondary_cpu(int cpu, struct task_struct *tidle)
