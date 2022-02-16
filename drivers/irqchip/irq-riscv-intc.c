@@ -18,7 +18,7 @@
 #include <linux/smp.h>
 #include <asm/hwcap.h>
 
-static struct irq_domain *intc_domain;
+struct irq_domain *intc_domain = NULL;
 
 static asmlinkage void riscv_intc_irq(struct pt_regs *regs)
 {
@@ -160,3 +160,84 @@ static int __init riscv_intc_init(struct device_node *node,
 }
 
 IRQCHIP_DECLARE(riscv, "riscv,cpu-intc", riscv_intc_init);
+
+#ifdef CONFIG_ACPI
+
+static int __init
+riscv_intc_acpi_parse_madt(union acpi_subtable_headers *header,
+			   const unsigned long end)
+{
+	// TODO: Detect AIA CSR enabled status here
+	return 0;
+}
+
+static bool __init acpi_validate_rintc_table(struct acpi_subtable_header
+					     *header,
+					     struct acpi_probe_entry *ape)
+{
+	int count;
+	/* Collect Information from MADT */
+	count = acpi_table_parse_madt(ACPI_MADT_TYPE_RINTC,
+				      riscv_intc_acpi_parse_madt, 0);
+	if (count <= 0)
+		return false;
+
+	return true;
+}
+
+static int __init
+riscv_intc_acpi_init(union acpi_subtable_headers *header,
+		     const unsigned long end)
+{
+	int rc;
+	int nr_irqs;
+	struct fwnode_handle *fn;
+	struct acpi_madt_rintc *rintc;
+
+	rintc = (struct acpi_madt_rintc *)header;
+
+	if (riscv_hartid_to_cpuid(rintc->hartid) != smp_processor_id()) {
+		return 0;
+	}
+
+	if (intc_domain) {
+		pr_info
+		    ("riscv_intc_acpi_init: RISCV INTC already initialized\n");
+		return 0;
+	}
+
+	nr_irqs = BITS_PER_LONG;
+	if (riscv_aia_available && (BITS_PER_LONG == 32))
+		nr_irqs = BITS_PER_LONG * 2;
+
+	fn = irq_domain_alloc_named_fwnode("RISCV-INTC");
+	WARN_ON(fn == NULL);
+	if (!fn)
+		return -1;
+	intc_domain = irq_domain_create_linear(fn, nr_irqs,
+					       &riscv_intc_domain_ops, NULL);
+	if (!intc_domain) {
+		pr_err("unable to add IRQ domain\n");
+		return -ENXIO;
+	}
+
+	riscv_set_intc_hwnode_fn(riscv_intc_hwnode);
+
+	if (riscv_aia_available)
+		rc = set_handle_irq(&riscv_intc_aia_irq);
+	else
+		rc = set_handle_irq(&riscv_intc_irq);
+
+	if (rc) {
+		pr_err("failed to set irq handler\n");
+		return rc;
+	}
+	pr_info("%d local interrupts mapped%s\n",
+		nr_irqs, (riscv_aia_available) ? " using AIA" : "");
+
+	return 0;
+}
+
+IRQCHIP_ACPI_DECLARE(riscv_intc, ACPI_MADT_TYPE_RINTC,
+		     acpi_validate_rintc_table, 1, riscv_intc_acpi_init);
+#endif
