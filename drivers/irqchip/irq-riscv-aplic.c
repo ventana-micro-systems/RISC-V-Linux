@@ -687,4 +687,121 @@ static int __init aplic_init(void)
 {
 	return platform_driver_register(&aplic_driver);
 }
+
 core_initcall(aplic_init);
+
+#ifdef CONFIG_ACPI
+
+static int aplic_acpi_probe(struct platform_device *pdev)
+{
+	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
+	struct device *dev = &pdev->dev;
+	struct acpi_device *acpi_device;
+	struct aplic_priv *priv;
+	struct acpi_madt_aplic *aplic;
+	union acpi_object *obj;
+	phys_addr_t pa;
+	int rc;
+	struct acpi_subtable_header *entry;
+	struct fwnode_handle *fn;
+	struct irq_domain *msi_domain;
+
+	dev_info(dev, "probing via ACPI\n");
+	acpi_device = ACPI_COMPANION(dev);
+	if (!acpi_device) {
+		dev_err(dev, "ACPI companion is missing\n");
+		return -ENODEV;
+	}
+
+	if (ACPI_FAILURE
+	    (acpi_evaluate_object(acpi_device->handle, "_MAT", NULL, &buffer)))
+		return -ENODEV;
+	obj = buffer.pointer;
+	if (obj->type != ACPI_TYPE_BUFFER ||
+	    obj->buffer.length < sizeof(struct acpi_subtable_header)) {
+		dev_err(dev, "ACPI_TYPE_BUFFER\n");
+		return -ENODEV;
+	}
+
+	entry = (struct acpi_subtable_header *)obj->buffer.pointer;
+
+	aplic = container_of(entry, struct acpi_madt_aplic, header);
+
+
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+	platform_set_drvdata(pdev, priv);
+	priv->dev = dev;
+
+	priv->regs = devm_ioremap(dev, aplic->aplic_addr, aplic->aplic_size);
+	if (WARN_ON(!priv->regs)) {
+		dev_err(dev, "failed ioremap registers\n");
+		return -EIO;
+	}
+
+	priv->nr_irqs = aplic->num_interrupts;
+
+	msi_domain =
+	    irq_find_matching_fwnode(imsic_domain_id, DOMAIN_BUS_PLATFORM_MSI);
+	if (msi_domain)
+		dev_set_msi_domain(dev, msi_domain);
+	else
+		pr_err("Could not find parent MSI domain!\n");
+
+	/* Setup initial state APLIC interrupts */
+	aplic_init_hw_irqs(priv);
+
+	/* Setup MSIs */
+	rc = aplic_setup_lmask_msis(priv);
+	if (rc)
+		return rc;
+
+	/* Setup global config and interrupt delivery */
+	aplic_init_hw_global(priv);
+
+	/* Add irq domain instance for the APLIC */
+	fn = irq_domain_alloc_named_fwnode("APLIC");
+	/* Create Base IRQ domain */
+	priv->irqdomain = irq_domain_create_linear(fn, priv->nr_irqs + 1,
+						   &aplic_irqdomain_ops, priv);
+	if (!priv->irqdomain) {
+		dev_err(dev, "failed to add irq domain\n");
+		return -ENOMEM;
+	}
+
+	acpi_set_irq_model(ACPI_IRQ_MODEL_RISCV_AIA, fn);
+
+	if (priv->nr_idcs) {
+		dev_info(dev, "%d interrupts directly connected to %d CPUs\n",
+			 priv->nr_irqs, priv->nr_idcs);
+	} else {
+		pa = priv->msicfg.base_ppn << APLIC_xMSICFGADDR_PPN_SHIFT;
+		dev_info(dev, "%d interrupts forwared to MSI base %pa\n",
+			 priv->nr_irqs, &pa);
+	}
+
+	return 0;
+}
+
+static const struct acpi_device_id aplic_acpi_match[] = {
+	{"APLIC001", 0},
+	{}
+};
+
+static struct platform_driver aplic_acpi_driver = {
+	.driver	= {
+		.name = "riscv-aplic-acpi",
+		.acpi_match_table = aplic_acpi_match,
+	},
+	.probe	= aplic_acpi_probe,
+	.remove	= aplic_remove,
+};
+
+static int __init aplic_acpi_init(void)
+{
+	return platform_driver_register(&aplic_acpi_driver);
+}
+
+core_initcall(aplic_acpi_init);
+#endif
