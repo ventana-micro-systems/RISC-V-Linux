@@ -210,6 +210,22 @@ void acpi_table_print_madt_entry(struct acpi_subtable_header *header)
 		}
 		break;
 
+	case ACPI_MADT_TYPE_IMSIC:
+		{
+			struct acpi_madt_imsic *p =
+				(struct acpi_madt_imsic *)header;
+			pr_debug("IMSIC (num_sockets[%x] total_num_harts[%d])\n",
+				 p->num_sockets,
+				 p->total_num_harts);
+		}
+		break;
+
+	case ACPI_MADT_TYPE_RINTC:
+		{
+			pr_debug("RINTC found\n");
+		}
+		break;
+
 	default:
 		pr_warn("Found unsupported MADT entry (type = 0x%x)\n",
 			header->type);

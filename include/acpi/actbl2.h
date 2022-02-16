@@ -762,7 +762,10 @@ enum acpi_madt_type {
 	ACPI_MADT_TYPE_GENERIC_REDISTRIBUTOR = 14,
 	ACPI_MADT_TYPE_GENERIC_TRANSLATOR = 15,
 	ACPI_MADT_TYPE_MULTIPROC_WAKEUP = 16,
-	ACPI_MADT_TYPE_RESERVED = 17	/* 17 and greater are reserved */
+	ACPI_MADT_TYPE_APLIC = 17,
+	ACPI_MADT_TYPE_IMSIC = 18,
+	ACPI_MADT_TYPE_RINTC = 19,
+	ACPI_MADT_TYPE_RESERVED = 20	/* 20 and greater are reserved */
 };
 
 /*
@@ -991,6 +994,50 @@ struct acpi_madt_multiproc_wakeup_mailbox {
 };
 
 #define ACPI_MP_WAKE_COMMAND_WAKEUP    1
+
+struct acpi_imsic_socket {
+	u32 imsic_addr_lo;
+	u32 imsic_addr_hi;
+	u32 imsic_size;
+};
+
+/* 18: IMSIC Group (ACPI 6.4+) */
+
+struct acpi_madt_imsic {
+	struct acpi_subtable_header header;
+	u8 version;
+	u8 mode;
+	u8 num_sockets;
+	u8 reserved1;
+	u16 num_interrupt_id;
+	u16 ipi_id;
+	u16 reserved;
+	u32 total_num_harts;
+	u32 hart_index;
+	struct acpi_imsic_socket socket_imsic[1];
+};
+
+struct acpi_madt_rintc {
+	struct acpi_subtable_header header;
+	u8 version;
+	u8 reserved;
+	u32 uid;
+	u64 hartid;
+	u32 flags;
+};
+
+struct acpi_madt_aplic {
+	struct acpi_subtable_header header;
+	u8 id;
+	u8 version;
+	u8 mode;
+	u8 reserved1;
+	u16 global_irq_base;
+	u16 num_interrupts;
+	u16 reserved2;
+	u32 aplic_size;
+	u64 aplic_addr;
+};
 
 /*
  * Common flags fields for MADT subtables
@@ -2164,6 +2211,44 @@ struct acpi_pptt_id {
 	u16 major_rev;
 	u16 minor_rev;
 	u16 spin_rev;
+};
+
+/*******************************************************************************
+ *
+ * REDT - RISC-V Extension Description Table
+ *
+ ******************************************************************************/
+
+union acpi_rhct_hart_caps {
+	struct {
+		/* Revisit: Move mmu_type to extension list */
+		u32 mmu_type:4;
+		u32 reserved:28;
+	};
+	u32 hart_cap;
+};
+
+struct acpi_table_rhct {
+	struct acpi_table_header header;	/* Common ACPI table header */
+	u32 flags;
+};
+
+struct acpi_rhct_hart_info_cap {
+	u16 length;
+	u8 version;
+	u8 reserved;
+	u32 acpi_proc_id;
+	u32 isa;
+	u32 hart_hwcap;
+};
+
+struct acpi_rhct_hart_info_ext {
+	u16 ext;
+	u16 attr;
+};
+
+struct acpi_rhct_hart_info {
+	struct acpi_rhct_hart_info_cap cap;
 };
 
 /*******************************************************************************

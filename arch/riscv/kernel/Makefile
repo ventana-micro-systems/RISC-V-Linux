@@ -22,6 +22,7 @@ obj-y	+= cpu.o
 obj-y	+= cpufeature.o
 obj-y	+= entry.o
 obj-y	+= irq.o
+obj-y	+= io.o
 obj-y	+= process.o
 obj-y	+= ptrace.o
 obj-y	+= reset.o
@@ -49,6 +50,8 @@ obj-$(CONFIG_RISCV_BOOT_SPINWAIT) += cpu_ops_spinwait.o
 obj-$(CONFIG_MODULES)		+= module.o
 obj-$(CONFIG_MODULE_SECTIONS)	+= module-sections.o
 
+obj-$(CONFIG_ACPI)		+= acpi.o
+obj-$(CONFIG_PCI)		+= pci.o
 obj-$(CONFIG_FUNCTION_TRACER)	+= mcount.o ftrace.o
 obj-$(CONFIG_DYNAMIC_FTRACE)	+= mcount-dyn.o
 

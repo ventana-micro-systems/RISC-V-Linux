@@ -131,6 +131,25 @@ __io_writes_outs(writes, u64, q, __io_bw(), __io_aw())
 
 __io_writes_outs(outs, u64, q, __io_pbr(), __io_paw())
 #define outsq(addr, buffer, count) __outsq((void __iomem *)addr, buffer, count)
+
+/*
+ * String version of I/O memory access operations.
+ */
+extern void __memcpy_fromio(void *, const volatile void __iomem *, size_t);
+extern void __memcpy_toio(volatile void __iomem *, const void *, size_t);
+extern void __memset_io(volatile void __iomem *, int, size_t);
+
+
+#define memset_io(c,v,l)	__memset_io((c),(v),(l))
+#define memcpy_fromio(a,c,l)	__memcpy_fromio((a),(c),(l))
+#define memcpy_toio(c,a,l)	__memcpy_toio((c),(a),(l))
+
+/*
+ * I/O memory mapping functions.
+ */
+extern void __iomem *__ioremap(phys_addr_t phys_addr, size_t size, pgprot_t prot);
+extern void iounmap(volatile void __iomem *addr);
+extern void __iomem *ioremap_cache(phys_addr_t phys_addr, size_t size);
 #endif
 
 #include <asm-generic/io.h>
